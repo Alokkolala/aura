@@ -13,8 +13,8 @@ import time
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 
-from agent import (BAND, BERRY_TYPES, BeliefMemory, BaselineAgent, Decision,
-                   greedy_goal)
+from agent import (BAND, BERRY_TYPES, POLICIES, BeliefMemory, Decision,
+                   PolicyAgent, greedy_goal)
 from llm import LLMClient
 from world import CRITICAL_ENERGY, REGIME_PRESETS, World
 
@@ -22,6 +22,9 @@ IDLE_STEPS = 5          # how long an idle goal holds before re-deciding
 STALE_AFTER = 30        # force a decision if nothing meaningful happened
 BEHAVIOR_STREAK = 3     # consecutive optimal goals before behaviour counts as corrected
 LOG_KEEP = 300          # entries retained in memory for the UI
+PARSE_FAILURE_LIMIT = 0.20   # above this a run is measuring the parser, not the agent
+
+AGENT_KINDS = ("llm", "baseline") + POLICIES
 
 
 def _sign(v) -> int:
@@ -40,6 +43,7 @@ class ChangeRecord:
     t_behavior_correct: int | None = None
     regret: float = 0.0
     streak: int = 0
+    sampled: list = field(default_factory=list)  # changed berries eaten since t_change
 
     def latencies(self) -> dict:
         def gap(a, b):
@@ -63,7 +67,9 @@ class Sim:
 
         self.world = World(seed=seed)
         self.beliefs = BeliefMemory()
-        self.baseline = BaselineAgent(seed=seed)
+        # "baseline" is the friendly name for the epsilon-greedy reference line
+        policy = "epsilon" if agent_kind in ("llm", "baseline") else agent_kind
+        self.policy_agent = PolicyAgent(seed=seed, policy=policy)
         self.llm = LLMClient()
 
         self.goal: str | None = None
@@ -90,11 +96,14 @@ class Sim:
         self.investigation_cost = 0
         self.decisions = 0
         self.decisions_matching_own_beliefs = 0
+        self.starvation_steps = 0
         self.calibration: list[tuple[float, bool]] = []
 
         self.run_id = f"{time.strftime('%Y%m%d-%H%M%S')}-{agent_kind}-s{seed}"
         self.log_path = Path("runs") / f"{self.run_id}.jsonl"
         self.log_path.parent.mkdir(exist_ok=True)
+        self._fh = None   # opened lazily, kept open: reopening per event does not
+                          # scale to the thousands of steps this experiment needs
 
         if agent_kind == "llm" and not self.llm.configured:
             self.agent_kind = "baseline"
@@ -144,8 +153,8 @@ class Sim:
         view = self.world.agent_view()
         prev = self.goal or "idle"
 
-        if self.agent_kind == "baseline":
-            decision = self.baseline.decide(view, self.beliefs, self.history, trigger)
+        if self.agent_kind != "llm":
+            decision = self.policy_agent.decide(view, self.beliefs, self.history, trigger)
         else:
             self.thinking = True
             try:
@@ -189,6 +198,8 @@ class Sim:
         oracle = max(0, max(truth.values()))
         for c in self._open_changes():
             c.regret += oracle - actual
+            if berry in c.changed and berry not in c.sampled:
+                c.sampled.append(berry)
             if c.t_contradiction is None and mismatch and berry in c.changed:
                 c.t_contradiction = self.world.step
                 self._emit("contradiction", researcher_only=True, berry=berry,
@@ -308,6 +319,8 @@ class Sim:
             self.pending_trigger = "energy_critical"
 
         w.end_of_step()
+        if any(self.starved(c) for c in self._open_changes()):
+            self.starvation_steps += 1
 
     async def run_forever(self) -> None:
         while True:
@@ -318,6 +331,39 @@ class Sim:
             await asyncio.sleep(0 if self.speed >= 50 else 1.0 / self.speed)
 
     # ---- reporting ----------------------------------------------------------
+
+    def starved(self, c: ChangeRecord) -> list[str]:
+        """Berries whose rule changed, whose belief is still sign-wrong, and which the
+        agent has not eaten since the change.
+
+        This is observation starvation: the agent is not failing to reason, it is
+        failing to LOOK - and it is failing to look precisely because its stale belief
+        says looking is a bad idea. A wrong belief suppressing the evidence that would
+        correct it is a different failure from slow belief revision, and mixing the two
+        into one 'adaptation' number hides it completely.
+        """
+        truth = self.world.truth
+        return [b for b in c.changed
+                if b not in c.sampled
+                and _sign(self.beliefs.b[b]["estimated_effect"]) != _sign(truth[b])]
+
+    def validity(self) -> dict:
+        """Infrastructure failure masquerades as cognitive failure. Gate on it.
+
+        A run that trips this is not a weak result - it is not a result. Exclude it
+        from analysis rather than reporting it.
+        """
+        reasons = []
+        st = self.llm.stats()
+        if self.agent_kind == "llm":
+            if st["parse_failure_rate"] > PARSE_FAILURE_LIMIT:
+                reasons.append(f"parse failure {st['parse_failure_rate']:.0%} "
+                               f"> {PARSE_FAILURE_LIMIT:.0%}")
+            if st["transport_errors"]:
+                reasons.append(f"{st['transport_errors']} transport errors")
+        if self.beliefs.dropped_updates:
+            reasons.append(f"{self.beliefs.dropped_updates} belief updates unparseable")
+        return {"ok": not reasons, "reasons": reasons}
 
     def _calibration_bins(self) -> list[dict]:
         bins = []
@@ -375,9 +421,13 @@ class Sim:
                     self.decisions_matching_own_beliefs / self.decisions, 3)
                     if self.decisions else None,
                 "steps_at_critical": w.steps_at_critical,
+                "starvation_steps": self.starvation_steps,
                 "would_have_died_at": w.would_have_died_at,
                 "calibration": self._calibration_bins(),
             },
+            "validity": self.validity(),
+            "policies": list(POLICIES),
             "changes": [{**asdict(c), "latencies": c.latencies(),
+                         "starved": self.starved(c),
                          "regret": round(c.regret, 1)} for c in self.changes],
         }

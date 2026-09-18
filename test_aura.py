@@ -102,7 +102,7 @@ async def _tick_until(sim: Sim, pred, cap: int = 400):
 
 def test_prediction_is_snapshotted_before_the_world_reveals_anything():
     sim = _tmp(Sim(seed=3, agent_kind="baseline"))
-    sim.baseline.epsilon = 0.0
+    sim.policy_agent.epsilon = 0.0
     _teach(sim, {"red": 15, "blue": -15, "yellow": 5})
     sim.set_truth({"red": -15})                       # silent swap, agent not told
 
@@ -117,7 +117,7 @@ def test_prediction_is_snapshotted_before_the_world_reveals_anything():
 
 def test_adaptation_latencies_decompose_and_baseline_adapts_fast():
     sim = _tmp(Sim(seed=3, agent_kind="baseline"))
-    sim.baseline.epsilon = 0.0
+    sim.policy_agent.epsilon = 0.0
     _teach(sim, {"red": 15, "blue": -15, "yellow": 5})
     sim.set_truth({"red": -15})
 

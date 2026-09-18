@@ -85,6 +85,27 @@ in the wrong shape (`{"belief": "red=-15"}`). Both are handled; both are counted
 Watch `dropped updates` and `llm parse fail` — if either climbs, the run is measuring
 the plumbing rather than the agent.
 
+## Second result: it is the policy, not the reasoning
+
+`compare.py` — 8 seeds, silent red/blue swap at step 60, same belief updater for all:
+
+```
+                regret   never re-sampled the changed rule
+greedy            1375   8/8
+uncertainty       1810   8/8     <- worse than not exploring at all
+epsilon            220   1/8
+age                140   0/8
+contradiction      110   0/8
+```
+
+Revision latency was **1 on every policy and every seed**. The 16× regret spread is
+entirely about which evidence the policy let the agent see — not about how well it
+reasoned once it saw it.
+
+`uncertainty` losing to `greedy` is the sharp one: confidence is computed as
+consistency, and a stale belief's window is perfectly consistent, so the wrong belief
+looks like the *safest* one to skip. See `AGENTS.md` §4.4.
+
 ## Not in v1, deliberately
 
 Noise, scanner, tools, day/night, enemies, crafting, multiple hidden contexts, larger

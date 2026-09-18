@@ -66,6 +66,7 @@ instrument panel, not the agent.
 | `server.py` | FastAPI + SSE. Thin — no logic |
 | `static/sprites.js` | every pixel asset, as 8×8 char maps |
 | `static/index.html` | the researcher panel |
+| `compare.py` | runs every policy through an identical world + identical silent swap |
 | `runs/*.jsonl` | one event log per run, for offline analysis |
 
 Run: `.venv/Scripts/python -m uvicorn server:app --port 8321` → http://localhost:8321
@@ -178,6 +179,63 @@ Other counters that run: parse failure 9%, dropped updates 0, `goal = own greedy
 (it deviates from its own greedy mostly to investigate — the epistemic-behaviour
 signal working), investigation cost 135, would-have-died step 40.
 
+### 4.4 Second experiment — observation starvation, isolated
+
+`compare.py`, 8 seeds, red/blue swapped silently at step 60, 400 steps. Every agent
+shares the same EMA belief updater and differs **only** in when it spends energy
+re-checking something it already believes.
+
+```
+                regret   never re-sampled the changed rule
+greedy            1375   8/8
+uncertainty       1810   8/8      <- worse than not exploring at all
+epsilon            220   1/8
+age                140   0/8
+contradiction      110   0/8
+```
+
+**Revision latency was 1 for every policy, on every seed.** Belief revision is not the
+bottleneck and never was. The entire 16× spread in regret comes from *which evidence
+the policy allowed the agent to see*. This is the finding:
+
+> **Adaptation is limited not only by belief revision, but by which evidence the
+> current policy allows the agent to see.**
+
+Call it **observation starvation** (equivalently: policy-induced evidence starvation):
+
+```
+wrong belief -> avoid action -> no new evidence -> wrong belief persists
+```
+
+It is a distinct failure class from slow reasoning, and `greedy` reproduces it 8/8 —
+it is deterministic, not a fluke of one run.
+
+**The surprise: `uncertainty` is worse than `greedy`.** Confidence here is computed as
+the consistency of `recent_outcomes`. After the swap, blue's window is still all −15 —
+perfectly consistent — so blue becomes the agent's *most* confident belief precisely
+because it is stale. Uncertainty-seeking exploration therefore steers **away** from the
+one belief that is wrong, spends its budget re-checking things that are genuinely
+noisy, and pays the exploration cost for none of the benefit.
+
+That is the confidence-lock worth claiming, and it is narrower than "a confident wrong
+belief protects itself": the mechanism is not confidence alone but **confidence used as
+an exploration signal, when that confidence has no notion of age**. A consistency-based
+confidence in a non-stationary world is not merely uninformative — it is actively
+misleading. Note this result is a property of *that* confidence definition; a
+recency- or age-weighted confidence would likely invert it, and testing that is next.
+
+**What fixes it.** `age` (re-check anything unseen for K steps) and `contradiction`
+(one rule broke, so queue every *other* belief for one re-check) both eliminate
+starvation entirely, 0/8. `contradiction` is best and is the cheapest possible
+meta-belief about environmental stability:
+
+```
+local contradiction -> global suspicion -> targeted re-exploration
+```
+
+`epsilon` is a lottery: it recovers on 7 seeds and starves on 1, with regret variance
+an order of magnitude wider than either principled policy.
+
 ---
 
 ## 5. How to read the metrics
@@ -189,6 +247,19 @@ signal working), investigation cost 135, would-have-died step 40.
 | **belief correction** | contradiction → belief sign matches truth for all changed berries | revision (partial ≠ corrected) |
 | **behaviour** | contradiction → optimal goal chosen 3× running | belief correction (it can know and not act) |
 | **regret** | energy forgone while wrong | total reward |
+| **starvation** | changed rule never re-sampled, belief still sign-wrong | slow revision. The agent is not failing to think, it is failing to look |
+
+Four failure classes, which reward alone blends into mush:
+
+| class | meaning |
+|---|---|
+| `detection failure` | never observed the contradiction |
+| `observation starvation` | never observed it *because its own policy avoids that action* |
+| `belief error` | observed it, believed the wrong thing, acted on it |
+| `policy error` | believed correctly and acted against its own belief anyway |
+
+`investigation_cost` is energy spent deliberately gathering evidence and is **not** a
+failure — do not fold it into the others.
 
 **Validity gates.** Before trusting any run, check `llm parse fail` and
 `dropped updates`. If either is climbing, you are measuring the plumbing, not the
@@ -220,8 +291,14 @@ finding and an artefact.
 - The `unk` (not-yet-known) rendering in Reality-vs-Agent was fixed but **not visually
   re-verified** at step 0 — the reload landed on a run where all beliefs were known.
   Two-line change, no UI test coverage. Verify on a fresh run.
-- No automated LLM-vs-baseline comparison run yet. Same seed, same schedule, diff the
-  change records — that is the next thing worth building.
+- `compare.py` has not been run with `--agents llm` at scale. That is the open
+  question: where does the LLM's self-chosen policy sit against these five? Its
+  `investigate_X` goals suggest something between `epsilon` and `contradiction`.
+- Test whether an **age-weighted confidence** inverts the `uncertainty` result (§4.4).
+  If it does, that is a concrete prescription, not just a diagnosis.
+- The natural next step beyond `contradiction`: a real `P(world stable)` meta-belief
+  that rises while predictions hold and falls on any surprise, scaling re-exploration
+  continuously instead of via a queue.
 - Calibration bins are computed and shipped in the snapshot but not yet plotted.
 - Regime *schedules* work via `POST /control {"action":"schedule"}` but have no UI.
   Manual buttons only. Schedules are what make runs comparable; wire them up.

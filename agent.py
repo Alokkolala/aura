@@ -226,44 +226,115 @@ def build_prompt(view, beliefs: BeliefMemory, history: list[dict],
             {"role": "user", "content": user}]
 
 
-class BaselineAgent:
-    """Exponential-moving-average learner with epsilon-greedy exploration.
+POLICIES = ("greedy", "epsilon", "uncertainty", "age", "contradiction")
 
-    The reference line, and deliberately a strong one: a weak baseline would flatter the
-    LLM for free. alpha is high because this world changes abruptly - at alpha=0.5 the
-    average over a half-stale window lands on 0 and never recovers the sign.
+
+class PolicyAgent:
+    """Fixed-rule action selection over the shared BeliefMemory.
+
+    These exist to attack one question: how can an agent recover from changes in
+    parts of the world its current policy no longer samples? Every policy here uses
+    the SAME belief updater (EMA) and differs ONLY in when it spends energy
+    re-sampling something it believes it already knows.
+
+      greedy        never re-samples. The control - it should starve every time.
+      epsilon       re-samples at random. The classic reference line.
+      uncertainty   re-samples whatever it is least confident about.
+      age           re-samples whatever it has not seen for `recheck_age` steps.
+      contradiction one rule broke, so suspect the others: on any mismatch, queue
+                    every OTHER berry for one re-check. This is the cheapest
+                    possible meta-belief about environmental stability.
+
+    alpha is high (0.8) because this world changes abruptly: at alpha=0.5 an average
+    over a half-stale window lands on exactly 0 and never recovers the sign.
     """
 
-    def __init__(self, seed: int = 0, alpha: float = 0.8, epsilon: float = 0.1):
+    def __init__(self, seed: int = 0, policy: str = "epsilon", alpha: float = 0.8,
+                 epsilon: float = 0.1, recheck_age: int = 40,
+                 uncertainty_p: float = 0.15):
+        assert policy in POLICIES, policy
         self.rng = random.Random(seed)
+        self.policy = policy
         self.alpha = alpha
         self.epsilon = epsilon
+        self.recheck_age = recheck_age
+        self.uncertainty_p = uncertainty_p
+        self._seen = 0            # history entries already scanned
+        self._queue: list[str] = []   # berries awaiting re-check
 
-    def decide(self, view, beliefs: BeliefMemory, history, trigger) -> Decision:
-        updates = []
+    def _estimate(self, beliefs: BeliefMemory):
         est: dict[str, float | None] = {}
+        conf: dict[str, float] = {}
+        updates = []
         for t in BERRY_TYPES:
             outs = beliefs.b[t]["recent_outcomes"]
             if not outs:
-                est[t] = None
+                est[t], conf[t] = None, 0.0
                 continue
             v = float(outs[0])
             for o in outs[1:]:
                 v = (1 - self.alpha) * v + self.alpha * o
             est[t] = v
-            hits = sum(1 for o in outs if abs(o - v) <= BAND)
-            conf = hits / len(outs)
+            conf[t] = sum(1 for o in outs if abs(o - v) <= BAND) / len(outs)
             updates.append({
                 "berry": t,
                 "estimated_effect": round(v, 2),
-                "confidence": round(conf, 2),
-                "status": "stable" if conf >= 0.6 else "questioned",
+                "confidence": round(conf[t], 2),
+                "status": "stable" if conf[t] >= 0.6 else "questioned",
             })
+        return est, conf, updates
+
+    def _explore(self, view, beliefs, conf) -> tuple[str, str] | None:
+        """Returns (berry, reason) when this policy wants to spend energy looking."""
+        if self.policy == "greedy":
+            return None
+        if self.policy == "epsilon":
+            if self.rng.random() < self.epsilon:
+                return self.rng.choice(BERRY_TYPES), "epsilon explore"
+            return None
+        if self.policy == "uncertainty":
+            if self.rng.random() < self.uncertainty_p:
+                t = min(BERRY_TYPES, key=lambda b: conf[b])
+                return t, f"least confident ({conf[t]:.2f})"
+            return None
+        if self.policy == "age":
+            stale = [(view.step - (beliefs.b[t]["last_seen_step"] or 0), t)
+                     for t in BERRY_TYPES]
+            age, t = max(stale)
+            if age > self.recheck_age:
+                return t, f"unchecked for {age} steps"
+            return None
+        if self.policy == "contradiction":
+            if self._queue:
+                return self._queue.pop(0), "another rule broke; re-checking this one"
+            return None
+        return None
+
+    def decide(self, view, beliefs: BeliefMemory, history, trigger) -> Decision:
+        est, conf, updates = self._estimate(beliefs)
+        src = f"policy:{self.policy}"
+
+        # one rule changing is evidence that others may have changed too
+        new = history[self._seen:]
+        self._seen = len(history)
+        if self.policy == "contradiction":
+            for h in new:
+                if not h["mismatch"]:
+                    continue
+                for t in BERRY_TYPES:
+                    if t != h["berry"] and t not in self._queue:
+                        self._queue.append(t)
 
         unknown = [t for t in BERRY_TYPES if est[t] is None]
         if unknown:
-            return Decision(f"investigate_{unknown[0]}", "no data yet", updates, "baseline")
-        if self.rng.random() < self.epsilon:
-            t = self.rng.choice(BERRY_TYPES)
-            return Decision(f"investigate_{t}", "epsilon explore", updates, "baseline")
-        return Decision(greedy_goal(est), "ema greedy", updates, "baseline")
+            return Decision(f"investigate_{unknown[0]}", "no data yet", updates, src)
+
+        want = self._explore(view, beliefs, conf)
+        if want:
+            return Decision(f"investigate_{want[0]}", want[1], updates, src)
+        return Decision(greedy_goal(est), "ema greedy", updates, src)
+
+
+def BaselineAgent(seed: int = 0, alpha: float = 0.8, epsilon: float = 0.1):
+    """The default reference line: EMA + epsilon-greedy."""
+    return PolicyAgent(seed=seed, policy="epsilon", alpha=alpha, epsilon=epsilon)
