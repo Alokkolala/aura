@@ -1,0 +1,444 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AURA — researcher panel</title>
+<link rel="icon" href="data:,">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=VT323&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg0:#0d0b1f; --bg1:#16142b; --cellA:#221f3d; --cellB:#2a2649;
+  --line:#453d6b; --dim:#7a72a8; --txt:#c9c2ee; --white:#f2f0ff;
+  --red:#e43b44; --blue:#4d9be6; --yel:#ffd541; --green:#63c74d;
+  --orange:#ff8426; --mag:#d83f87; --cyan:#c0e8ff;
+  --cell:46px;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg0);color:var(--txt)}
+body{font-family:'VT323',ui-monospace,monospace;font-size:19px;line-height:1.15;
+  image-rendering:pixelated;padding:14px}
+svg{display:block}
+.pix{font-family:'Press Start 2P',ui-monospace,monospace;letter-spacing:.05em}
+
+/* ---- chrome ---- */
+.panel{background:var(--bg1);border:3px solid var(--line);
+  box-shadow:4px 4px 0 rgba(0,0,0,.55);padding:11px 13px 13px;margin-bottom:13px}
+.panel > h2{font-size:9px;color:var(--dim);margin:0 0 10px;padding-bottom:7px;
+  border-bottom:2px solid var(--line);font-weight:400}
+button{font-family:'Press Start 2P',ui-monospace,monospace;font-size:8px;cursor:pointer;
+  background:var(--bg1);color:var(--txt);border:3px solid var(--line);padding:8px 10px;
+  box-shadow:3px 3px 0 rgba(0,0,0,.5)}
+button:hover{background:var(--cellB);color:var(--white)}
+button:active{transform:translate(3px,3px);box-shadow:none}
+button.on{background:var(--green);border-color:var(--green);color:var(--bg0)}
+button.hot{background:var(--mag);border-color:var(--mag);color:var(--white)}
+button.sm{padding:5px 7px;font-size:7px}
+input[type=number]{font-family:'VT323',monospace;font-size:18px;width:62px;background:var(--bg0);
+  color:var(--txt);border:2px solid var(--line);padding:3px 5px}
+input[type=range]{accent-color:var(--mag);width:130px}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+
+/* ---- layout ---- */
+#app{display:grid;grid-template-columns:auto 360px minmax(320px,1fr);gap:13px;align-items:start;
+  max-width:1500px;margin:0 auto}
+@media(max-width:1180px){#app{grid-template-columns:1fr}}
+
+/* ---- header ---- */
+#hdr{display:flex;gap:18px;align-items:center;flex-wrap:wrap;
+  border:3px solid var(--line);background:var(--bg1);padding:10px 14px;margin:0 auto 13px;
+  max-width:1500px;box-shadow:4px 4px 0 rgba(0,0,0,.55)}
+#hdr .t{font-size:15px;color:var(--mag)}
+.stat{font-size:17px;color:var(--dim)}
+.stat b{color:var(--white);font-weight:400}
+.bar{display:flex;gap:2px}
+.pip{width:8px;height:19px;background:var(--line)}
+#think{color:var(--orange);font-size:9px;visibility:hidden}
+
+/* ---- grid ---- */
+#grid{display:grid;grid-template-columns:repeat(8,var(--cell));border:3px solid var(--line);width:max-content}
+.cell{width:var(--cell);height:var(--cell);display:flex;align-items:center;justify-content:center;position:relative}
+.spr{position:relative;z-index:2}
+.spr.bob{animation:bob 1.1s steps(1,end) infinite}
+.spr.bob2{animation-delay:.36s}
+.spr.bob3{animation-delay:.72s}
+@keyframes bob{0%,49%{transform:translateY(0)}50%,100%{transform:translateY(-3px)}}
+.fx{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;z-index:3;pointer-events:none}
+.trail{position:absolute;width:7px;height:7px;background:var(--cyan);z-index:1}
+
+/* ---- beliefs ---- */
+.belief{display:grid;grid-template-columns:34px 1fr;gap:10px;padding:8px 0;border-bottom:2px solid var(--cellB)}
+.belief:last-child{border-bottom:0}
+.belief .eff{font-size:25px;color:var(--white);line-height:1}
+.belief .meta{font-size:16px;color:var(--dim)}
+.cbar{height:9px;background:var(--cellA);border:2px solid var(--line);margin:5px 0 4px}
+.cbar i{display:block;height:100%;background:var(--cyan)}
+.tag{font-family:'Press Start 2P',monospace;font-size:7px;padding:3px 5px;margin-left:6px}
+.tag.q{background:var(--orange);color:var(--bg0)}
+.tag.u{background:var(--line);color:var(--txt)}
+.down{color:var(--orange)}
+
+/* ---- reality vs agent ---- */
+table{border-collapse:collapse;width:100%;font-size:18px}
+th{font-family:'Press Start 2P',monospace;font-size:7px;color:var(--dim);
+  text-align:right;padding:0 0 7px;font-weight:400}
+th:first-child{text-align:left}
+td{padding:6px 0;border-top:2px solid var(--cellB);text-align:right}
+td:first-child{text-align:left;color:var(--dim)}
+.num{font-size:21px;color:var(--white)}
+.ok{color:var(--green)} .bad{color:var(--mag)} .unk{color:var(--dim)}
+tr.diverged td{background:rgba(216,63,135,.14)}
+
+/* ---- log ---- */
+#log{height:430px;overflow-y:auto;font-size:17px;line-height:1.3}
+#log div{padding:2px 0;border-bottom:1px solid rgba(69,61,107,.35);white-space:pre-wrap}
+#log .s{color:var(--dim)}
+#log .k-eat{color:var(--txt)}
+#log .k-mismatch{color:var(--orange)}
+#log .k-decision{color:var(--cyan)}
+#log .k-belief_update{color:var(--blue)}
+#log .k-rule_change{color:var(--mag)}
+#log .k-adapted{color:var(--green)}
+#log .k-contradiction{color:var(--orange)}
+#log .k-llm_fail,#log .k-warning{color:var(--red)}
+.ro{font-family:'Press Start 2P',monospace;font-size:6px;background:var(--mag);
+  color:var(--white);padding:2px 4px;margin-left:5px}
+
+/* ---- metrics ---- */
+.mgrid{display:grid;grid-template-columns:1fr 1fr;gap:7px 14px;font-size:17px}
+.mgrid div{display:flex;justify-content:space-between;gap:8px;border-bottom:1px solid rgba(69,61,107,.35);padding:3px 0}
+.mgrid span{color:var(--dim)}
+.mgrid b{font-weight:400;color:var(--white)}
+.chg{border:2px solid var(--line);padding:7px 9px;margin-top:9px;font-size:16px}
+.chg .hd{font-family:'Press Start 2P',monospace;font-size:7px;color:var(--mag);margin-bottom:6px}
+.lat{display:grid;grid-template-columns:1fr auto;gap:1px 10px}
+.lat b{font-weight:400;color:var(--white)}
+</style>
+</head>
+<body>
+<h1 class="sr-only">AURA researcher panel</h1>
+
+<div id="hdr">
+  <span class="t pix">A U R A</span>
+  <span class="stat">STEP <b id="h-step">0</b></span>
+  <span class="stat">ENERGY <b id="h-energy">50</b>/100</span>
+  <div class="bar" id="h-bar"></div>
+  <span class="stat">GOAL <b id="h-goal">—</b></span>
+  <span class="stat" id="h-reason" style="flex:1;min-width:150px"></span>
+  <span class="stat">AGENT <b id="h-agent">—</b></span>
+  <span class="pix" id="think">THINKING…</span>
+</div>
+
+<div id="app">
+  <div>
+    <div class="panel">
+      <h2>WORLD</h2>
+      <div id="grid"></div>
+    </div>
+
+    <div class="panel">
+      <h2>RESEARCHER CONTROLS — NOT VISIBLE TO THE AGENT</h2>
+      <div class="row" style="margin-bottom:10px">
+        <button id="b-run">&#9654; START</button>
+        <button id="b-reset">&#8635; RESET</button>
+        <span class="stat">SPEED</span>
+        <input type="range" id="b-speed" min="1" max="50" value="6">
+        <span class="stat"><b id="h-speed">6</b>/s</span>
+      </div>
+      <div class="row" style="margin-bottom:10px">
+        <span class="stat">AGENT</span>
+        <button class="sm" id="b-llm">LLM</button>
+        <button class="sm" id="b-base">BASELINE</button>
+        <span class="stat">SEED</span><input type="number" id="b-seed" value="0">
+        <button class="sm" id="b-primed">PRIMED</button>
+      </div>
+      <div class="row" style="margin-bottom:10px">
+        <button class="hot" id="b-swap">SWAP RED / BLUE</button>
+      </div>
+      <div class="row" id="presets" style="margin-bottom:10px"></div>
+      <div class="row" id="rules"></div>
+    </div>
+  </div>
+
+  <div>
+    <div class="panel">
+      <h2>AGENT MIND — ITS BELIEFS, NOT THE WORLD</h2>
+      <div id="beliefs"></div>
+    </div>
+    <div class="panel">
+      <h2>REALITY vs AGENT</h2>
+      <table>
+        <thead><tr><th>BERRY</th><th>WORLD TRUTH</th><th>AGENT BELIEF</th><th>CONF</th></tr></thead>
+        <tbody id="rva"></tbody>
+      </table>
+    </div>
+    <div class="panel">
+      <h2>METRICS</h2>
+      <div class="mgrid" id="metrics"></div>
+      <div id="changes"></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>EVENT LOG</h2>
+    <div id="log"></div>
+  </div>
+</div>
+
+<script type="module">
+import { sprite, PAL } from '/static/sprites.js';
+
+const $ = (id) => document.getElementById(id);
+const BERRIES = ['red', 'blue', 'yellow'];
+const post = (body) => fetch('/control', {
+  method: 'POST', headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify(body),
+});
+
+let S = null;            // latest snapshot
+let anim = 0;            // slow idle frame counter
+let lastFlashStep = -1;
+const prevConf = {};
+
+/* ---------- static scaffolding ---------- */
+const cells = [];
+for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) {
+  const c = document.createElement('div');
+  c.className = 'cell';
+  c.style.background = ((x + y) % 2) ? PAL.cellB : PAL.cellA;
+  c.innerHTML = '<div class="spr"></div><div class="fx"></div>';
+  $('grid').appendChild(c);
+  cells.push(c);
+}
+$('h-bar').innerHTML = Array.from({ length: 20 }, () => '<div class="pip"></div>').join('');
+
+/* ---------- animation clock: steppy, not smooth ---------- */
+setInterval(() => { anim++; if (S) drawWorld(); }, 220);
+
+/* ---------- render ---------- */
+function drawWorld() {
+  const bpos = new Map(S.berries.map(b => [`${b.x},${b.y}`, b.type]));
+  const apos = `${S.agent[0]},${S.agent[1]}`;
+  const goalType = S.goal && S.goal !== 'idle' ? S.goal.split('_')[1] : null;
+  let targetKey = null;
+  if (goalType) {
+    let best = Infinity;
+    for (const b of S.berries) {
+      if (b.type !== goalType) continue;
+      const d = Math.max(Math.abs(b.x - S.agent[0]), Math.abs(b.y - S.agent[1]));
+      if (d < best) { best = d; targetKey = `${b.x},${b.y}`; }
+    }
+  }
+  const trail = new Map(S.trail.map((p, i) => [`${p[0]},${p[1]}`, (i + 1) / (S.trail.length + 1)]));
+
+  cells.forEach((c, i) => {
+    const key = `${i % 8},${Math.floor(i / 8)}`;
+    const spr = c.firstChild, fx = c.lastChild;
+    let html = '', cls = 'spr';
+
+    if (key === apos) {
+      const name = S.thinking ? 'agentThink' : 'agent';
+      const frame = S.thinking ? anim : S.step;          // walk syncs to sim steps
+      html = sprite(name, 4.4, frame);
+    } else if (bpos.has(key)) {
+      const t = bpos.get(key);
+      html = sprite(t, 4.4, anim);
+      cls += ' bob' + (t === 'blue' ? ' bob2' : t === 'yellow' ? ' bob3' : '');
+    }
+    if (spr.dataset.k !== html + cls) { spr.innerHTML = html; spr.className = cls; spr.dataset.k = html + cls; }
+
+    let over = '';
+    if (key === targetKey) over = sprite('target', 5.7, anim);
+    else if (S.energy < 20 && key === apos) over = '';
+    if (fx.dataset.k !== over) { fx.innerHTML = over; fx.dataset.k = over; }
+
+    const t = trail.get(key);
+    let dot = c.querySelector('.trail');
+    if (t && key !== apos) {
+      if (!dot) { dot = document.createElement('div'); dot.className = 'trail'; c.appendChild(dot); }
+      dot.style.opacity = t * 0.45;
+    } else if (dot) dot.remove();
+  });
+
+  // one-shot mismatch burst, keyed on step so it fires exactly once
+  if (S.flash && S.step !== lastFlashStep) {
+    lastFlashStep = S.step;
+    const idx = S.flash.pos[1] * 8 + S.flash.pos[0];
+    const fx = cells[idx]?.lastChild;
+    if (fx && S.flash.mismatch) {
+      let f = 0;
+      const play = () => {
+        if (f > 2) { fx.innerHTML = ''; fx.dataset.k = ''; return; }
+        fx.innerHTML = sprite('burst', 5.7, f++);
+        fx.dataset.k = 'burst';
+        setTimeout(play, 130);
+      };
+      play();
+    }
+  }
+}
+
+function drawHeader() {
+  $('h-step').textContent = S.step;
+  $('h-energy').textContent = S.energy;
+  $('h-goal').textContent = (S.goal || '—').toUpperCase().replace('_', ' ');
+  $('h-reason').textContent = S.goal_reason ? '“' + S.goal_reason + '”' : '';
+  $('h-agent').textContent = S.agent_kind.toUpperCase() + (S.primed ? '' : ' / NAIVE');
+  $('think').style.visibility = S.thinking ? 'visible' : 'hidden';
+  const col = S.energy < 20 ? PAL.mag : S.energy < 45 ? PAL.yel : PAL.green;
+  [...$('h-bar').children].forEach((p, i) => {
+    p.style.background = i < Math.round(S.energy / 5) ? col : PAL.line;
+  });
+  $('b-run').innerHTML = S.running ? '&#10073;&#10073; PAUSE' : '&#9654; START';
+  $('b-run').className = S.running ? 'on' : '';
+  $('b-llm').className = 'sm' + (S.agent_kind === 'llm' ? ' on' : '');
+  $('b-base').className = 'sm' + (S.agent_kind === 'baseline' ? ' on' : '');
+  $('b-primed').className = 'sm' + (S.primed ? ' on' : '');
+}
+
+function drawBeliefs() {
+  $('beliefs').innerHTML = BERRIES.map(t => {
+    const b = S.beliefs[t];
+    const eff = b.estimated_effect === null ? '?' :
+      (b.estimated_effect > 0 ? '+' : '') + (+b.estimated_effect).toFixed(0);
+    const dropped = prevConf[t] !== undefined && b.confidence < prevConf[t] - 0.001;
+    const tag = b.status === 'questioned' ? '<span class="tag q">QUESTIONED</span>'
+              : b.status === 'unknown' ? '<span class="tag u">UNKNOWN</span>' : '';
+    const recent = (b.recent_outcomes || []).map(o => (o > 0 ? '+' : '') + o).join(' ') || '—';
+    return `<div class="belief">
+      <div>${sprite(t, 4)}</div>
+      <div>
+        <div class="eff">${eff}${tag}${dropped ? '<span class="down"> &#9660;</span>' : ''}</div>
+        <div class="cbar"><i style="width:${(b.confidence * 100).toFixed(0)}%;
+          background:${dropped ? PAL.orange : PAL.cyan}"></i></div>
+        <div class="meta">conf ${(b.confidence * 100).toFixed(0)}% ·
+          obs ${b.observations} · recent ${recent}</div>
+      </div></div>`;
+  }).join('');
+  BERRIES.forEach(t => { prevConf[t] = S.beliefs[t].confidence; });
+}
+
+function drawRVA() {
+  // three states, not two: not-yet-known is honest ignorance, not divergence.
+  // Flagging "unknown" as diverged would make a fresh run look like a failing one.
+  $('rva').innerHTML = BERRIES.map(t => {
+    const b = S.beliefs[t], truth = S.truth[t];
+    const known = b.estimated_effect !== null;
+    const match = known && S.sign_match[t];
+    const eff = known ? (b.estimated_effect > 0 ? '+' : '') + (+b.estimated_effect).toFixed(0) : '?';
+    return `<tr class="${known && !match ? 'diverged' : ''}">
+      <td>${t.toUpperCase()}</td>
+      <td class="num">${truth > 0 ? '+' : ''}${truth}</td>
+      <td class="num ${!known ? 'unk' : match ? 'ok' : 'bad'}">${eff}</td>
+      <td>${known ? (b.confidence * 100).toFixed(0) + '%' : '—'}</td></tr>`;
+  }).join('');
+}
+
+function drawMetrics() {
+  const m = S.metrics, L = S.llm;
+  const acc = m.prediction_accuracy === null ? '—' : (m.prediction_accuracy * 100).toFixed(0) + '%';
+  const own = m.goal_matches_own_beliefs === null ? '—' : (m.goal_matches_own_beliefs * 100).toFixed(0) + '%';
+  const rows = [
+    ['total reward', m.total_reward], ['berries eaten', m.eaten_total],
+    ['predictions', m.predictions], ['accuracy', acc],
+    ['mismatches', m.mismatches], ['belief errors', m.belief_errors],
+    ['policy errors', m.policy_errors], ['investigation cost', m.investigation_cost],
+    ['goal = own greedy', own], ['steps critical', m.steps_at_critical],
+    ['dropped updates', m.dropped_belief_updates],
+    ['would have died', m.would_have_died_at ?? '—'],
+    ['llm parse fail', S.agent_kind === 'llm' ? (L.parse_failure_rate * 100).toFixed(0) + '%' : '—'],
+  ];
+  $('metrics').innerHTML = rows.map(([k, v]) => `<div><span>${k}</span><b>${v}</b></div>`).join('');
+
+  $('changes').innerHTML = S.changes.map((c, i) => {
+    const l = c.latencies, g = (v) => v === null ? '<b>—</b>' : `<b>${v}</b>`;
+    const ch = Object.entries(c.changed)
+      .map(([b, [o, n]]) => `${b} ${o > 0 ? '+' : ''}${o}→${n > 0 ? '+' : ''}${n}`).join(', ');
+    return `<div class="chg">
+      <div class="hd">RULE CHANGE #${i + 1} @ STEP ${c.t_change}</div>
+      <div style="color:var(--dim);margin-bottom:6px">${ch}</div>
+      <div class="lat">
+        <span>detection (exploration)</span>${g(l.detection)}
+        <span>revision (reasoning)</span>${g(l.revision)}
+        <span>belief correction</span>${g(l.belief_correction)}
+        <span>behaviour corrected</span>${g(l.behavior)}
+        <span>regret</span><b>${c.regret}</b>
+      </div></div>`;
+  }).join('');
+}
+
+function drawLog() {
+  const el = $('log');
+  const stick = el.scrollTop + el.clientHeight >= el.scrollHeight - 30;
+  el.innerHTML = S.log.slice().reverse().map(e => {
+    const ro = e.researcher_only ? '<span class="ro">RESEARCHER</span>' : '';
+    let body;
+    if (e.kind === 'eat') {
+      const p = e.predicted === null ? '?' : (e.predicted > 0 ? '+' : '') + e.predicted;
+      const a = (e.actual > 0 ? '+' : '') + e.actual;
+      body = `ate ${e.berry} · predicted ${p} · actual ${a}`
+           + (e.mismatch ? '  ⚠ PREDICTION MISMATCH' : '');
+    } else if (e.kind === 'decision') {
+      body = `goal ${e.goal}${e.goal === e.greedy_under_own_beliefs ? '' : '  (≠ own greedy '
+            + e.greedy_under_own_beliefs + ')'} · ${e.reason || ''}`;
+    } else if (e.kind === 'belief_update') {
+      const b = e.before, a = e.after;
+      body = `belief ${e.berry}: ${b.estimated_effect ?? '?'} → ${a.estimated_effect ?? '?'}`
+           + ` · conf ${b.confidence.toFixed(2)} → ${a.confidence.toFixed(2)} · ${a.status}`;
+    } else if (e.kind === 'rule_change') {
+      body = 'WORLD TRUTH CHANGED · ' + Object.entries(e.changed)
+        .map(([k, v]) => `${k} ${v[0]}→${v[1]}`).join(', ') + ` · ${e.label}`;
+    } else if (e.kind === 'adapted') {
+      body = `ADAPTED · revision ${e.latencies.revision} · behaviour ${e.latencies.behavior}`
+           + ` · regret ${e.regret}`;
+    } else if (e.kind === 'contradiction') {
+      body = `first contradictory observation on ${e.berry} · ${e.since_change} steps after change`;
+    } else {
+      body = e.text || e.reason || JSON.stringify(e);
+    }
+    const kind = e.kind === 'eat' && e.mismatch ? 'mismatch' : e.kind;
+    return `<div class="k-${kind}"><span class="s">${String(e.step).padStart(4, '0')}</span> ${body}${ro}</div>`;
+  }).join('');
+  if (stick) el.scrollTop = 0;
+}
+
+/* ---------- controls ---------- */
+$('b-run').onclick = () => post({ action: S.running ? 'pause' : 'start' });
+$('b-reset').onclick = () => post({ action: 'reset', seed: +$('b-seed').value,
+  agent: S.agent_kind, primed: S.primed });
+$('b-speed').oninput = (e) => { $('h-speed').textContent = e.target.value;
+  post({ action: 'speed', value: +e.target.value }); };
+$('b-swap').onclick = () => post({ action: 'swap' });
+$('b-llm').onclick = () => post({ action: 'reset', agent: 'llm', seed: +$('b-seed').value, primed: S.primed });
+$('b-base').onclick = () => post({ action: 'reset', agent: 'baseline', seed: +$('b-seed').value, primed: S.primed });
+$('b-primed').onclick = () => post({ action: 'reset', agent: S.agent_kind, seed: +$('b-seed').value, primed: !S.primed });
+
+let builtControls = false;
+function buildControls() {
+  if (builtControls) return; builtControls = true;
+  $('presets').innerHTML = '<span class="stat">REGIME</span>' + S.presets
+    .map(p => `<button class="sm" data-p="${p}">${p.toUpperCase()}</button>`).join('');
+  $('presets').querySelectorAll('[data-p]').forEach(b =>
+    b.onclick = () => post({ action: 'preset', name: b.dataset.p }));
+  $('rules').innerHTML = '<span class="stat">TRUTH</span>' + BERRIES.map(t =>
+    `<span class="stat">${t.slice(0, 1).toUpperCase()}</span>
+     <button class="sm" data-b="${t}" data-d="-5">−</button>
+     <b id="t-${t}" style="color:var(--white);min-width:30px;display:inline-block;text-align:center"></b>
+     <button class="sm" data-b="${t}" data-d="5">+</button>`).join(' ');
+  $('rules').querySelectorAll('[data-b]').forEach(b => b.onclick = () =>
+    post({ action: 'set_rule', berry: b.dataset.b, value: S.truth[b.dataset.b] + (+b.dataset.d) }));
+}
+
+/* ---------- stream ---------- */
+new EventSource('/events').onmessage = (ev) => {
+  S = JSON.parse(ev.data);
+  buildControls();
+  BERRIES.forEach(t => { const el = $('t-' + t); if (el) el.textContent = (S.truth[t] > 0 ? '+' : '') + S.truth[t]; });
+  drawHeader(); drawWorld(); drawBeliefs(); drawRVA(); drawMetrics(); drawLog();
+};
+</script>
+</body>
+</html>
