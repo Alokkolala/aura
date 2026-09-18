@@ -9,6 +9,11 @@ The question this exists to answer:
     How can an agent recover from a change in a part of the world that its current
     policy no longer samples?
 
+`xcheck` is the column that matters for the LLM row: steps from the contradiction
+to the agent choosing to investigate a DIFFERENT berry than the one that broke.
+The hand-coded `contradiction` policy always does this. Whether the LLM does it
+without being told is the question this project exists to answer.
+
 Every agent here shares the same belief updater and differs only in when it spends
 energy re-checking something it believes it already knows. `greedy` is the control.
 """
@@ -39,11 +44,14 @@ async def run_one(agent: str, seed: int, swap_at: int, steps: int) -> dict:
         "revision": lat.get("revision"),
         "belief": lat.get("belief_correction"),
         "behaviour": lat.get("behavior"),
+        "xcheck": lat.get("cross_recheck"),
         "starved": ",".join(sim.starved(c)) if c else "",
         "starv_steps": sim.starvation_steps,
         "regret": round(c.regret) if c else 0,
         "reward": sim.total_reward,
         "valid": sim.validity()["ok"],
+        "cost": sim.llm.stats()["cost_usd"],
+        "stopped": sim.llm.stats()["budget_stopped"],
     }
 
 
@@ -61,25 +69,24 @@ async def main() -> None:
 
     print(f"\nworld seeds {args.seeds} | swap red<->blue at step {args.swap_at} "
           f"| {args.steps} steps\n")
-    head = (f"{'agent':<14}{'detect':>8}{'revise':>8}{'belief':>8}{'behav':>8}"
-            f"{'starved':>10}{'starv%':>8}{'regret':>9}{'reward':>8}")
+    head = (f"{'agent':<14}{'seed':>5}{'detect':>8}{'revise':>8}{'belief':>8}"
+            f"{'behav':>8}{'xcheck':>8}{'starved':>9}{'regret':>8}{'reward':>8}")
     print(head)
     print("-" * len(head))
 
     rows: dict[str, list[dict]] = {}
     for agent in args.agents:
-        rows[agent] = []
-        for seed in args.seeds:
-            r = await run_one(agent, seed, args.swap_at, args.steps)
-            rows[agent].append(r)
+        # seeds are independent and LLM runs are latency-bound, so fan them out
+        rows[agent] = await asyncio.gather(*[
+            run_one(agent, s, args.swap_at, args.steps) for s in args.seeds])
+        for r in rows[agent]:
             if not r["valid"]:
                 print(f"{agent:<14}  RUN INVALID (infrastructure failure) - excluded")
                 continue
-            pct = 100 * r["starv_steps"] / max(1, args.steps - args.swap_at)
-            print(f"{agent:<14}{fmt(r['detection']):>8}{fmt(r['revision']):>8}"
-                  f"{fmt(r['belief']):>8}{fmt(r['behaviour']):>8}"
-                  f"{r['starved'] or '-':>10}{pct:>7.0f}%"
-                  f"{r['regret']:>9}{r['reward']:>8}")
+            print(f"{agent:<14}{r['seed']:>5}{fmt(r['detection']):>8}"
+                  f"{fmt(r['revision']):>8}{fmt(r['belief']):>8}"
+                  f"{fmt(r['behaviour']):>8}{fmt(r['xcheck']):>8}"
+                  f"{r['starved'] or '-':>9}{r['regret']:>8}{r['reward']:>8}")
         print()
 
     print("median regret, and how often the changed rule was never re-sampled:\n")

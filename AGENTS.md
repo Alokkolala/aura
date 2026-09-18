@@ -236,6 +236,43 @@ local contradiction -> global suspicion -> targeted re-exploration
 `epsilon` is a lottery: it recovers on 7 seeds and starves on 1, with regret variance
 an order of magnitude wider than either principled policy.
 
+### 4.5 Third experiment — is the LLM coherent with its own beliefs?
+
+`analyze.py`, offline over `runs/*.jsonl`, costs nothing. The live run had flagged
+`goal_matches_own_beliefs` at ~30%: the agent picked a goal that was not greedy under
+its own stated beliefs 70% of the time. That could be deliberate exploration or plain
+incoherence, and nothing distinguished them. Over 90 scored LLM decisions:
+
+```
+  66%  deliberate exploration          (investigate_*, not greedy - and fine)
+  26%  coherent
+   9%  chose a worse target than its own belief
+```
+
+So the 70% is mostly **not** a defect. The agent explores on purpose, which is why its
+regret should land nearer `epsilon` than `greedy`.
+
+The 9% is the interesting residue, and it is a clean **belief correct + action wrong**
+failure — a class a bandit cannot exhibit, because it has no stated reason to
+contradict:
+
+```
+step 56  seek_red   (own greedy: seek_yellow)
+  "Red consistently reduces energy; no evidence of positive effect.
+   Need to eat red to survive."
+step 58  seek_red   (own greedy: seek_yellow)
+  "Red consistently gives -15; blue and yellow are stable; need energy, so eat red."
+```
+
+It states the correct belief and takes the opposite action *in the same sentence*.
+Both instances occur just after energy hit 0. The working hypothesis is
+**stress-induced incoherence**: under survival pressure the action collapses toward
+"eat something" while the stated belief stays correct. `steps_at_critical` and
+`would_have_died_at` are the covariates to test that against — do not remove them.
+
+This is why `belief_error` and `policy_error` must stay separate counters. Reward
+alone would have shown "agent ate poison" and hidden which of the two happened.
+
 ---
 
 ## 5. How to read the metrics

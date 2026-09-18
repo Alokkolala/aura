@@ -125,7 +125,10 @@ def test_adaptation_latencies_decompose_and_baseline_adapts_fast():
 
     rec = sim.changes[0]
     lat = rec.latencies()
-    assert all(v is not None for v in lat.values()), lat
+    # cross_recheck is deliberately excluded: investigating a DIFFERENT berry is an
+    # optional meta-inference, not part of adapting to the contradiction you saw.
+    core = {k: v for k, v in lat.items() if k != "cross_recheck"}
+    assert all(v is not None for v in core.values()), lat
     assert lat["detection"] >= 0
     # the EMA learner revises on its very next decision — this is the reference line
     assert lat["revision"] <= 2, f"baseline revision latency {lat['revision']}"

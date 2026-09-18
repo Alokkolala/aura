@@ -20,6 +20,7 @@ load_dotenv()
 
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
 DEFAULT_MODEL = "openai/gpt-oss-20b"
+BUDGET_USD = float(os.environ.get("AURA_BUDGET_USD", "0") or 0)  # 0 = no cap
 
 
 def extract_json(text: str | None) -> dict | None:
@@ -70,6 +71,17 @@ def coerce(obj: dict | None) -> Decision | None:
 
 
 class LLMClient:
+    """One client per Sim, but spend is accounted GLOBALLY.
+
+    Concurrent runs each hold their own client, so a per-client cap would let N
+    parallel runs spend N times the budget. The cap is a class attribute for that
+    reason. Cost comes from OpenRouter's own `usage.cost` rather than a local price
+    table, so it cannot drift out of date.
+    """
+
+    total_cost = 0.0        # shared across every client in the process
+    budget_stopped = False
+
     def __init__(self):
         self.model = os.environ.get("AURA_MODEL", DEFAULT_MODEL)
         self.key = os.environ.get("OPENROUTER_API_KEY", "")
@@ -78,6 +90,8 @@ class LLMClient:
         self.transport_errors = 0
         self.total_latency = 0.0
         self.last_error: str | None = None
+        self.prompt_tokens = 0
+        self.completion_tokens = 0
         self._client = httpx.AsyncClient(timeout=60.0)
 
     @property
@@ -105,14 +119,26 @@ class LLMClient:
                 "max_tokens": 2000,
                 "reasoning": {"effort": "low"},
                 "response_format": {"type": "json_object"},
+                "usage": {"include": True},
             },
         )
         r.raise_for_status()
-        msg = r.json()["choices"][0]["message"]
+        body = r.json()
+        u = body.get("usage") or {}
+        self.prompt_tokens += u.get("prompt_tokens", 0)
+        self.completion_tokens += u.get("completion_tokens", 0)
+        if u.get("cost") is not None:
+            type(self).total_cost += float(u["cost"])
+        msg = body["choices"][0]["message"]
         return [c for c in (msg.get("content"), msg.get("reasoning")) if c]
 
     async def decide(self, view, beliefs, history, trigger, primed=True,
                      prev_goal: str = "idle") -> Decision:
+        if BUDGET_USD and type(self).total_cost >= BUDGET_USD:
+            type(self).budget_stopped = True
+            return Decision(goal=prev_goal, reason="budget exhausted",
+                            belief_updates=[], source="fallback")
+
         messages = build_prompt(view, beliefs, history, trigger, primed)
 
         for attempt in (1, 2):
@@ -158,5 +184,10 @@ class LLMClient:
             "transport_errors": self.transport_errors,
             "parse_failure_rate": round(self.parse_failures / ok, 3),
             "avg_latency_s": round(self.total_latency / ok, 2),
+            "prompt_tokens": self.prompt_tokens,
+            "completion_tokens": self.completion_tokens,
+            "cost_usd": round(type(self).total_cost, 5),
+            "budget_usd": BUDGET_USD or None,
+            "budget_stopped": type(self).budget_stopped,
             "last_error": self.last_error,
         }

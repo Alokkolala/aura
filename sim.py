@@ -44,6 +44,8 @@ class ChangeRecord:
     regret: float = 0.0
     streak: int = 0
     sampled: list = field(default_factory=list)  # changed berries eaten since t_change
+    contradicted_berry: str | None = None
+    t_cross_recheck: int | None = None   # first investigate_* of a DIFFERENT berry
 
     def latencies(self) -> dict:
         def gap(a, b):
@@ -53,6 +55,10 @@ class ChangeRecord:
             "revision": gap(self.t_revision, self.t_contradiction),
             "belief_correction": gap(self.t_belief_correct, self.t_contradiction),
             "behavior": gap(self.t_behavior_correct, self.t_contradiction),
+            # the meta-inference: "one rule broke, so my OTHER beliefs may be stale
+            # too". A bandit cannot make this leap without being hand-coded to.
+            # Whether an LLM makes it unprompted is the whole question.
+            "cross_recheck": gap(self.t_cross_recheck, self.t_contradiction),
         }
 
 
@@ -202,6 +208,7 @@ class Sim:
                 c.sampled.append(berry)
             if c.t_contradiction is None and mismatch and berry in c.changed:
                 c.t_contradiction = self.world.step
+                c.contradicted_berry = berry
                 self._emit("contradiction", researcher_only=True, berry=berry,
                            since_change=self.world.step - c.t_change)
 
@@ -227,6 +234,14 @@ class Sim:
 
     def _on_decision(self, goal: str) -> None:
         optimal = greedy_goal(self.world.truth)  # researcher-side only
+        for c in self.changes:
+            if c.t_contradiction is None:
+                continue
+            if (c.t_cross_recheck is None and goal.startswith("investigate_")
+                    and goal.split("_", 1)[1] != c.contradicted_berry):
+                c.t_cross_recheck = self.world.step
+                self._emit("cross_recheck", researcher_only=True, goal=goal,
+                           since_contradiction=self.world.step - c.t_contradiction)
         for c in self._open_changes():
             if c.t_contradiction is None:
                 continue
